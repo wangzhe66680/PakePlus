@@ -1,22 +1,772 @@
 <!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <link rel="stylesheet" href="styles.css" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>PakePlus App</title>
-        <script type="module" src="/main.js" defer></script>
-    </head>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>论文流程图设计器（可拖拽+导出）</title>
+    <!-- Include required libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/interactjs@1.10.11/dist/interact.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 10px;
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 15px;
+            height: 95vh;
+        }
+        .control-panel {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            overflow-y: auto;
+        }
+        .preview-panel {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            position: relative;
+            overflow: hidden;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            resize: vertical;
+            margin-bottom: 15px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        .control-item {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+        }
+        label {
+            width: 100px;
+            font-size: 14px;
+            color: #555;
+        }
+        input[type="range"], input[type="color"], select {
+            flex: 1;
+            margin-left: 10px;
+        }
+        button {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-right: 5px;
+            margin-bottom: 5px;
+        }
+        button:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        #diagram-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            transform-origin: 0 0;
+            min-width: fit-content;
+            min-height: fit-content;
+            position: absolute;
+            border: 2px dashed #ccc;
+            box-shadow: 0 0 10px rgba(0,0,0,0.05);
+        }
+        #zoom-controls {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(255,255,255,0.8);
+            padding: 5px;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            z-index: 10;
+        }
+        #zoom-controls button {
+            padding: 5px 10px;
+            margin: 2px;
+        }
+        #drag-toggle {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 100;
+        }
+        .draggable-node {
+            cursor: move;
+        }
+        #preview-wrapper {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            position: relative;
+        }
+        .dragging {
+            opacity: 0.7;
+        }
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            overflow: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Left control panel -->
+        <div class="control-panel">
+            <h2>流程图代码</h2>
+            <textarea id="mermaid-code">
+graph TD
+    Start([开始]) --> A[第一步]
+    A --> B{决策点}
+    B -->|是| C[执行操作1]
+    B -->|否| D[执行操作2]
+    C --> E([结束])
+    D --> E
+            </textarea>
 
-    <body>
-        <main class="container">
-            <h1>Welcome to PakePlus</h1>
+            <!-- Layout controls -->
+            <div class="control-group">
+                <h3>布局设置</h3>
+                <div class="control-item">
+                    <label>节点间距</label>
+                    <input type="range" id="nodeSpacing" min="20" max="100" value="40">
+                </div>
+                <div class="control-item">
+                    <label>层级间距</label>
+                    <input type="range" id="rankSpacing" min="20" max="100" value="50">
+                </div>
+                <div class="control-item">
+                    <label>菱形扁平度</label>
+                    <input type="range" id="shapeAspectRatio" min="0.5" max="2" step="0.1" value="1">
+                </div>
+            </div>
 
-            <form class="row" id="greet-form">
-                <input id="greet-input" placeholder="Enter a name..." />
-                <button type="submit">Greet</button>
-            </form>
-            <p id="greet-msg"></p>
-        </main>
-    </body>
+            <!-- Node style controls -->
+            <div class="control-group">
+                <h3>节点样式</h3>
+                <div class="control-item">
+                    <label>填充颜色</label>
+                    <input type="color" id="nodeFill" value="#ffffff">
+                </div>
+                <div class="control-item">
+                    <label>边框颜色</label>
+                    <input type="color" id="nodeBorder" value="#333333">
+                </div>
+                <div class="control-item">
+                    <label>边框粗细</label>
+                    <input type="range" id="borderWidth" min="1" max="5" value="2">
+                </div>
+            </div>
+
+            <!-- Edge style controls -->
+            <div class="control-group">
+                <h3>连线样式</h3>
+                <div class="control-item">
+                    <label>连线颜色</label>
+                    <input type="color" id="lineColor" value="#666666">
+                </div>
+                <div class="control-item">
+                    <label>连线粗细</label>
+                    <input type="range" id="lineWidth" min="1" max="10" value="2">
+                </div>
+                <div class="control-item">
+                    <label>连线类型</label>
+                    <select id="lineType">
+                        <option value="basis">曲线</option>
+                        <option value="linear">直线</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Text style controls -->
+            <div class="control-group">
+                <h3>文字样式</h3>
+                <div class="control-item">
+                    <label>字体大小</label>
+                    <input type="range" id="fontSize" min="12" max="24" value="16">
+                </div>
+                <div class="control-item">
+                    <label>字体家族</label>
+                    <select id="fontFamily">
+                        <option value="Arial">Arial</option>
+                        <option value="Helvetica">Helvetica</option>
+                        <option value="Times New Roman">Times New Roman</option>
+                    </select>
+                </div>
+            </div>
+
+            <button id="renderBtn">立即渲染</button>
+            <button id="exportBtn">导出PNG</button>
+            <button id="copyBtn">复制到剪贴板</button>
+            <button id="saveBtn">保存草稿</button>
+            <button id="loadBtn">加载草稿</button>
+        </div>
+
+        <!-- Right preview panel -->
+        <div class="preview-panel">
+            <button id="drag-toggle">🔓 启用拖拽</button>
+            <div id="preview-wrapper">
+                <div id="canvas-container">
+                    <div id="diagram-container"></div>
+                </div>
+            </div>
+            <div id="zoom-controls">
+                <button id="zoom-in">+</button>
+                <button id="zoom-out">-</button>
+                <button id="zoom-reset">重置</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration state
+        let config = {
+            nodeSpacing: 40,
+            rankSpacing: 50,
+            shapeAspectRatio: 1,
+            nodeFill: '#ffffff',
+            nodeBorder: '#333333',
+            borderWidth: 2,
+            lineColor: '#666666',
+            lineWidth: 2,
+            lineType: 'basis',
+            fontSize: 16,
+            fontFamily: 'Arial',
+            isDraggable: false,
+            scale: 1.0,
+            posX: 0,
+            posY: 0
+        };
+
+        // Initialize Mermaid
+        mermaid.initialize({ 
+            startOnLoad: false,
+            theme: 'base',
+            themeVariables: {
+                primaryColor: config.nodeFill,
+                primaryBorderColor: config.nodeBorder,
+                primaryBorderWidth: `${config.borderWidth}px`,
+                lineColor: config.lineColor,
+                lineWidth: `${config.lineWidth}px`,
+                fontSize: `${config.fontSize}px`,
+                fontFamily: config.fontFamily
+            },
+            flowchart: {
+                nodeSpacing: config.nodeSpacing,
+                rankSpacing: config.rankSpacing,
+                curve: config.lineType,
+                htmlLabels: true
+            }
+        });
+
+        // DOM elements
+        const elements = {
+            code: document.getElementById('mermaid-code'),
+            container: document.getElementById('diagram-container'),
+            canvasContainer: document.getElementById('canvas-container'),
+            previewPanel: document.querySelector('.preview-panel'),
+            previewWrapper: document.getElementById('preview-wrapper'),
+            controls: {
+                nodeSpacing: document.getElementById('nodeSpacing'),
+                rankSpacing: document.getElementById('rankSpacing'),
+                shapeAspectRatio: document.getElementById('shapeAspectRatio'),
+                nodeFill: document.getElementById('nodeFill'),
+                nodeBorder: document.getElementById('nodeBorder'),
+                borderWidth: document.getElementById('borderWidth'),
+                lineColor: document.getElementById('lineColor'),
+                lineWidth: document.getElementById('lineWidth'),
+                lineType: document.getElementById('lineType'),
+                fontSize: document.getElementById('fontSize'),
+                fontFamily: document.getElementById('fontFamily')
+            },
+            buttons: {
+                render: document.getElementById('renderBtn'),
+                export: document.getElementById('exportBtn'),
+                copy: document.getElementById('copyBtn'),
+                save: document.getElementById('saveBtn'),
+                load: document.getElementById('loadBtn'),
+                dragToggle: document.getElementById('drag-toggle'),
+                zoomIn: document.getElementById('zoom-in'),
+                zoomOut: document.getElementById('zoom-out'),
+                zoomReset: document.getElementById('zoom-reset')
+            }
+        };
+
+        // Initialize controls
+        function initControls() {
+            Object.keys(elements.controls).forEach(key => {
+                elements.controls[key].addEventListener('input', updateConfig);
+            });
+
+            elements.controls.nodeSpacing.value = config.nodeSpacing;
+            elements.controls.rankSpacing.value = config.rankSpacing;
+            elements.controls.shapeAspectRatio.value = config.shapeAspectRatio;
+            elements.controls.nodeFill.value = config.nodeFill;
+            elements.controls.nodeBorder.value = config.nodeBorder;
+            elements.controls.borderWidth.value = config.borderWidth;
+            elements.controls.lineColor.value = config.lineColor;
+            elements.controls.lineWidth.value = config.lineWidth;
+            elements.controls.lineType.value = config.lineType;
+            elements.controls.fontSize.value = config.fontSize;
+            elements.controls.fontFamily.value = config.fontFamily;
+
+            elements.buttons.render.addEventListener('click', renderDiagram);
+            elements.buttons.export.addEventListener('click', exportDiagram);
+            elements.buttons.copy.addEventListener('click', copyToClipboard);
+            elements.buttons.save.addEventListener('click', saveDraft);
+            elements.buttons.load.addEventListener('click', loadDraft);
+            elements.buttons.dragToggle.addEventListener('click', toggleDrag);
+            elements.buttons.zoomIn.addEventListener('click', () => zoom(0.1));
+            elements.buttons.zoomOut.addEventListener('click', () => zoom(-0.1));
+            elements.buttons.zoomReset.addEventListener('click', resetView);
+
+            // Make canvas container draggable
+            interact(elements.canvasContainer)
+                .draggable({
+                    inertia: true,
+                    listeners: {
+                        move: dragMoveListener
+                    }
+                });
+        }
+
+        function dragMoveListener(event) {
+            config.posX += event.dx;
+            config.posY += event.dy;
+            updateCanvasPosition();
+        }
+
+        function updateCanvasPosition() {
+            elements.canvasContainer.scrollLeft -= config.posX;
+            elements.canvasContainer.scrollTop -= config.posY;
+            config.posX = 0;
+            config.posY = 0;
+        }
+
+        // Update configuration
+        function updateConfig(e) {
+            config[e.target.id] = e.target.type === 'range' ? 
+                parseFloat(e.target.value) : e.target.value;
+            
+            mermaid.initialize({
+                theme: 'base',
+                themeVariables: {
+                    primaryColor: config.nodeFill,
+                    primaryBorderColor: config.nodeBorder,
+                    primaryBorderWidth: `${config.borderWidth}px`,
+                    lineColor: config.lineColor,
+                    lineWidth: `${config.lineWidth}px`,
+                    fontSize: `${config.fontSize}px`,
+                    fontFamily: config.fontFamily
+                },
+                flowchart: {
+                    nodeSpacing: config.nodeSpacing,
+                    rankSpacing: config.rankSpacing,
+                    curve: config.lineType,
+                    htmlLabels: true
+                }
+            });
+
+            renderDiagram();
+        }
+
+        // Render flowchart
+        function renderDiagram() {
+            try {
+                elements.container.innerHTML = '';
+                const tempDiv = document.createElement('div');
+                tempDiv.className = 'mermaid';
+                tempDiv.textContent = elements.code.value;
+                elements.container.appendChild(tempDiv);
+                
+                mermaid.run({
+                    nodes: [tempDiv],
+                    suppressErrors: false
+                }).then(() => {
+                    applyShapeAspectRatio();
+                    updateEdgeStyles();
+                    if (config.isDraggable) {
+                        makeNodesDraggable();
+                    }
+                    centerDiagram();
+                }).catch(e => {
+                    console.error('Mermaid render error:', e);
+                    elements.container.innerHTML = `<div style="color:red;padding:20px;">Render error: ${e.message}</div>`;
+                });
+            } catch (error) {
+                console.error('Render exception:', error);
+                elements.container.innerHTML = `<div style="color:red;padding:20px;">System error: ${error.message}</div>`;
+            }
+        }
+
+        // Update edge styles
+        function updateEdgeStyles() {
+            const edges = d3.selectAll('.mermaid .edgePath path');
+            edges.attr('stroke-width', config.lineWidth);
+            edges.attr('stroke', config.lineColor);
+        }
+
+        // Apply diamond shape flattening
+        function applyShapeAspectRatio() {
+            if (config.shapeAspectRatio !== 1) {
+                d3.selectAll('.mermaid .node polygon').each(function() {
+                    const poly = d3.select(this);
+                    const box = this.getBBox();
+                    const centerX = box.x + box.width / 2;
+                    const centerY = box.y + box.height / 2;
+                    
+                    const points = poly.attr('points').split(' ').map(p => {
+                        const [x, y] = p.split(',').map(Number);
+                        return {x, y};
+                    });
+                    
+                    const newPoints = points.map(p => {
+                        const dx = p.x - centerX;
+                        const dy = p.y - centerY;
+                        return `${centerX + dx * config.shapeAspectRatio},${centerY + dy / config.shapeAspectRatio}`;
+                    }).join(' ');
+                    
+                    poly.attr('points', newPoints);
+                    
+                    // 更新与这个节点相连的所有边
+                    const nodeId = d3.select(this.parentNode).attr('id');
+                    if (nodeId) {
+                        updateConnectedEdges(d3.select(this.parentNode));
+                    }
+                });
+            }
+        }
+
+        // Center the diagram
+        function centerDiagram() {
+            const svg = elements.container.querySelector('svg');
+            if (svg) {
+                const containerWidth = elements.previewWrapper.clientWidth;
+                const containerHeight = elements.previewWrapper.clientHeight;
+                const svgWidth = svg.clientWidth;
+                const svgHeight = svg.clientHeight;
+                
+                // 计算居中位置并考虑缩放
+                const targetLeft = (containerWidth - svgWidth * config.scale) / 2;
+                const targetTop = (containerHeight - svgHeight * config.scale) / 2;
+                
+                // 调整容器位置
+                elements.container.style.left = `${Math.max(0, targetLeft)}px`;
+                elements.container.style.top = `${Math.max(0, targetTop)}px`;
+                
+                // 应用缩放变换
+                elements.container.style.transform = `scale(${config.scale})`;
+                
+                // 重置滚动位置
+                elements.canvasContainer.scrollLeft = 0;
+                elements.canvasContainer.scrollTop = 0;
+            }
+        }
+
+        // Make nodes draggable
+        function makeNodesDraggable() {
+            const svg = d3.select(elements.container.querySelector('svg'));
+            
+            svg.selectAll('.node').each(function() {
+                const node = d3.select(this);
+                const shape = node.select('rect, polygon');
+                if (shape.empty()) return;
+
+                let initialTransform = node.attr('transform') || 'translate(0,0)';
+                let [x, y] = initialTransform
+                    .replace('translate(', '')
+                    .replace(')', '')
+                    .split(',')
+                    .map(Number);
+
+                node.call(d3.drag()
+                    .on('start', function() {
+                        node.classed('dragging', true);
+                    })
+                    .on('drag', function(event) {
+                        x += event.dx;
+                        y += event.dy;
+                        node.attr('transform', `translate(${x}, ${y})`);
+                        updateConnectedEdges(node);
+                    })
+                    .on('end', function() {
+                        node.classed('dragging', false);
+                    })
+                );
+            });
+        }
+
+        // Update connected edges
+        function updateConnectedEdges(node) {
+            const nodeId = node.attr('id');
+            if (!nodeId) return;
+
+            const bbox = node.node().getBBox();
+            const nodeTransform = node.attr('transform') || 'translate(0,0)';
+            const [nodeX, nodeY] = nodeTransform
+                .replace('translate(', '')
+                .replace(')', '')
+                .split(',')
+                .map(Number);
+            const centerX = nodeX + bbox.width / 2;
+            const centerY = nodeY + bbox.height / 2;
+
+            d3.selectAll('.edgePath').each(function() {
+                const edge = d3.select(this);
+                const path = edge.select('path');
+                const edgeId = edge.attr('id') || '';
+
+                if (edgeId.includes(nodeId)) {
+                    const [sourceId, targetId] = edgeId.split('--').slice(1, 3);
+                    const sourceNode = d3.select(`#${sourceId}`);
+                    const targetNode = d3.select(`#${targetId}`);
+
+                    if (sourceNode.empty() || targetNode.empty()) return;
+
+                    const sourceBbox = sourceNode.node().getBBox();
+                    const sourceTransform = sourceNode.attr('transform') || 'translate(0,0)';
+                    const [sourceX, sourceY] = sourceTransform
+                        .replace('translate(', '')
+                        .replace(')', '')
+                        .split(',')
+                        .map(Number);
+                    const targetBbox = targetNode.node().getBBox();
+                    const targetTransform = targetNode.attr('transform') || 'translate(0,0)';
+                    const [targetX, targetY] = targetTransform
+                        .replace('translate(', '')
+                        .replace(')', '')
+                        .split(',')
+                        .map(Number);
+
+                    // 计算源节点和目标节点的中心点
+                    const sourceCenter = {
+                        x: sourceX + sourceBbox.width / 2,
+                        y: sourceY + sourceBbox.height / 2
+                    };
+                    const targetCenter = {
+                        x: targetX + targetBbox.width / 2,
+                        y: targetY + targetBbox.height / 2
+                    };
+
+                    // 对于菱形节点，计算边缘交点
+                    let sourcePoint = sourceCenter;
+                    let targetPoint = targetCenter;
+                    
+                    // 如果是菱形节点，计算边缘交点
+                    if (sourceNode.select('polygon').size() > 0) {
+                        sourcePoint = getPolygonIntersection(sourceNode, targetCenter);
+                    }
+                    if (targetNode.select('polygon').size() > 0) {
+                        targetPoint = getPolygonIntersection(targetNode, sourceCenter);
+                    }
+
+                    // 更新路径
+                    const pathD = `M${sourcePoint.x},${sourcePoint.y} L${targetPoint.x},${targetPoint.y}`;
+                    path.attr('d', pathD);
+                }
+            });
+        }
+
+        // 计算多边形与线的交点
+        function getPolygonIntersection(node, externalPoint) {
+            const polygon = node.select('polygon');
+            if (polygon.empty()) return {x: 0, y: 0};
+
+            const points = polygon.attr('points').split(' ').map(p => {
+                const [x, y] = p.split(',').map(Number);
+                return {x, y};
+            });
+            
+            const nodeTransform = node.attr('transform') || 'translate(0,0)';
+            const [nodeX, nodeY] = nodeTransform
+                .replace('translate(', '')
+                .replace(')', '')
+                .split(',')
+                .map(Number);
+            
+            // 计算中心点
+            const centerX = nodeX + polygon.node().getBBox().width / 2;
+            const centerY = nodeY + polygon.node().getBBox().height / 2;
+            
+            // 将外部点转换为相对于节点的坐标
+            const relativePoint = {
+                x: externalPoint.x - nodeX,
+                y: externalPoint.y - nodeY
+            };
+            
+            // 找到与从中心到外部点的直线相交的多边形边
+            for (let i = 0; i < points.length; i++) {
+                const p1 = points[i];
+                const p2 = points[(i + 1) % points.length];
+                
+                const intersection = lineIntersection(
+                    {x: centerX - nodeX, y: centerY - nodeY},
+                    relativePoint,
+                    p1,
+                    p2
+                );
+                
+                if (intersection) {
+                    return {
+                        x: intersection.x + nodeX,
+                        y: intersection.y + nodeY
+                    };
+                }
+            }
+            
+            // 如果没有找到交点，返回中心点
+            return {x: centerX, y: centerY};
+        }
+
+        // 计算两条线段的交点
+        function lineIntersection(a1, a2, b1, b2) {
+            const denominator = (a2.x - a1.x) * (b2.y - b1.y) - (a2.y - a1.y) * (b2.x - b1.x);
+            
+            if (denominator === 0) return null; // 平行或共线
+            
+            const ua = ((b1.x - a1.x) * (b2.y - b1.y) - (b1.y - a1.y) * (b2.x - b1.x)) / denominator;
+            const ub = ((b1.x - a1.x) * (a2.y - a1.y) - (b1.y - a1.y) * (a2.x - a1.x)) / denominator;
+            
+            if (ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1) {
+                return {
+                    x: a1.x + ua * (a2.x - a1.x),
+                    y: a1.y + ua * (a2.y - a1.y)
+                };
+            }
+            
+            return null;
+        }
+
+        // Toggle drag mode
+        function toggleDrag() {
+            config.isDraggable = !config.isDraggable;
+            elements.buttons.dragToggle.textContent = config.isDraggable ? '🔒 禁用拖拽' : '🔓 启用拖拽';
+            renderDiagram();
+        }
+
+        // Zoom control
+        function zoom(delta) {
+            config.scale = Math.max(0.5, Math.min(3, config.scale + delta));
+            elements.container.style.transform = `scale(${config.scale})`;
+            centerDiagram();
+        }
+
+        // Reset view
+        function resetView() {
+            config.scale = 1.0;
+            elements.container.style.transform = `scale(${config.scale})`;
+            centerDiagram();
+        }
+
+        // Export PNG
+        function exportDiagram() {
+            const svg = elements.container.querySelector('svg');
+            if (!svg) return;
+            
+            const originalTransform = elements.container.style.transform;
+            elements.container.style.transform = '';
+            
+            html2canvas(elements.container, {
+                backgroundColor: '#ffffff',
+                scale: 3,
+                useCORS: true
+            }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = 'flowchart.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+                
+                elements.container.style.transform = originalTransform;
+            }).catch(e => {
+                console.error('Export failed:', e);
+                alert('Export failed: ' + e.message);
+                elements.container.style.transform = originalTransform;
+            });
+        }
+
+        // Copy to clipboard
+        function copyToClipboard() {
+            html2canvas(elements.container, {
+                backgroundColor: '#ffffff',
+                scale: 2,
+                useCORS: true
+            }).then(canvas => {
+                canvas.toBlob(blob => {
+                    navigator.clipboard.write([
+                        new ClipboardItem({ 'image/png': blob })
+                    ]).then(() => {
+                        alert('Copied to clipboard!');
+                    });
+                });
+            });
+        }
+
+        // Save draft
+        function saveDraft() {
+            const data = {
+                code: elements.code.value,
+                config: config
+            };
+            localStorage.setItem('flowchart-draft', JSON.stringify(data));
+            alert('Draft saved!');
+        }
+
+        // Load draft
+        function loadDraft() {
+            const data = JSON.parse(localStorage.getItem('flowchart-draft'));
+            if (data) {
+                elements.code.value = data.code;
+                config = data.config;
+                updateControlsFromConfig();
+                renderDiagram();
+                alert('Draft loaded!');
+            } else {
+                alert('No saved draft found!');
+            }
+        }
+
+        // Update controls from config
+        function updateControlsFromConfig() {
+            elements.controls.nodeSpacing.value = config.nodeSpacing;
+            elements.controls.rankSpacing.value = config.rankSpacing;
+            elements.controls.shapeAspectRatio.value = config.shapeAspectRatio;
+            elements.controls.nodeFill.value = config.nodeFill;
+            elements.controls.nodeBorder.value = config.nodeBorder;
+            elements.controls.borderWidth.value = config.borderWidth;
+            elements.controls.lineColor.value = config.lineColor;
+            elements.controls.lineWidth.value = config.lineWidth;
+            elements.controls.lineType.value = config.lineType;
+            elements.controls.fontSize.value = config.fontSize;
+            elements.controls.fontFamily.value = config.fontFamily;
+        }
+
+        // Initialize
+        initControls();
+        renderDiagram();
+    </script>
+</body>
 </html>
